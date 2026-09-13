@@ -95,7 +95,7 @@ public class SwitchLoader extends BinaryLoader
         {
             this.binaryType = BinaryType.NSO0;
         }
-        else if (magic_0x0.equals("\u00DF\u004F\u0003\u00D5"))
+        else if (magic_0x0.equals("\u00DF\u004F\u0003\u00D5") || KNXAdapter.isKernel(provider))
         {
             this.binaryType = BinaryType.KERNEL_800;
         }
