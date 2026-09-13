@@ -11,6 +11,7 @@ import java.io.IOException;
 import adubbz.nx.loader.nxo.MOD0Adapter;
 import adubbz.nx.loader.nxo.NXOSection;
 import adubbz.nx.loader.nxo.NXOSectionType;
+import ghidra.app.util.bin.BinaryReader;
 import ghidra.app.util.bin.ByteArrayProvider;
 import ghidra.app.util.bin.ByteProvider;
 import ghidra.app.util.bin.format.elf.ElfDynamicTable;
@@ -22,10 +23,28 @@ import ghidra.util.exception.NotFoundException;
 // We don't have a MOD0, but inherit from the adapter anyway to reduce redundancy
 public class KNXAdapter extends MOD0Adapter
 {
+    private static final long LEGACY_MAP_MARKER = 0xD51C403EL;
+    private static final long INI1_MAGIC = 0x31494E49L;
+    private static final long MODERN_BRANCH_MASK = 0xFF000000L;
+    private static final long MODERN_BRANCH_VALUE = 0x14000000L;
+    private static final long COMMON_MAP_SIZE = 0x30;
+
     protected KNXMapHeader map;
     
     protected ByteProvider memoryProvider;
     protected NXOSection[] sections;
+
+    private static class MapLocation
+    {
+        final int offset;
+        final long adjustment;
+
+        MapLocation(int offset, long adjustment)
+        {
+            this.offset = offset;
+            this.adjustment = adjustment;
+        }
+    }
     
     public KNXAdapter(Program program, ByteProvider fileProvider)
     {
@@ -37,32 +56,132 @@ public class KNXAdapter extends MOD0Adapter
         }
         catch (IOException e)
         {
-            Msg.error(this, "Failed to read KNX");
-            e.printStackTrace();
+            throw new IllegalArgumentException("Failed to read KNX", e);
         }
+    }
+
+    public static boolean isKernel(ByteProvider provider) throws IOException
+    {
+        return findMap(provider) != null;
+    }
+
+    private static long readUnsignedInt(BinaryReader reader, long offset) throws IOException
+    {
+        long previous = reader.getPointerIndex();
+        reader.setPointerIndex(offset);
+        long value = reader.readNextUnsignedInt();
+        reader.setPointerIndex(previous);
+        return value;
+    }
+
+    private static boolean hasExpectedIni1(ByteProvider provider, BinaryReader reader, KNXMapHeader map) throws IOException
+    {
+        long ini1Offset = map.getIni1FileOffset();
+        long length = provider.length();
+
+        // Kernel-only dumps intentionally end exactly where embedded INI1
+        // begins. Accept that boundary without requiring the stripped magic.
+        if (ini1Offset == length)
+            return true;
+
+        if (ini1Offset < 0 || ini1Offset + 4 > length)
+            return false;
+
+        return readUnsignedInt(reader, ini1Offset) == INI1_MAGIC;
+    }
+
+    private static MapLocation findValidatedMap(ByteProvider provider, BinaryReader reader,
+        long start, long end, boolean relative) throws IOException
+    {
+        long length = provider.length();
+        long searchEnd = Math.min(end, length - COMMON_MAP_SIZE + 1);
+
+        for (long offset = start; offset < searchEnd; offset += 4)
+        {
+            long adjustment = relative ? offset : 0;
+            KNXMapHeader candidate = new KNXMapHeader(reader, Math.toIntExact(offset), adjustment);
+
+            if (candidate.isValid(length) && hasExpectedIni1(provider, reader, candidate))
+                return new MapLocation(Math.toIntExact(offset), adjustment);
+        }
+
+        return null;
+    }
+
+    private static MapLocation findMap(ByteProvider provider) throws IOException
+    {
+        long length = provider.length();
+
+        if (length < COMMON_MAP_SIZE)
+            return null;
+
+        BinaryReader reader = new BinaryReader(provider, true);
+
+        // 17.0.0+ kernels begin with a branch into rodata. The kernel map is
+        // stored near that branch target and its offsets are relative to the
+        // map's own location. This mirrors hactool's modern-kernel discovery.
+        if (length >= 8)
+        {
+            reader.setPointerIndex(0);
+            long firstInstruction = reader.readNextUnsignedInt();
+            long secondInstruction = reader.readNextUnsignedInt();
+
+            if ((firstInstruction & MODERN_BRANCH_MASK) == MODERN_BRANCH_VALUE && secondInstruction == 0)
+            {
+                long branchTarget = (firstInstruction & 0x00FFFFFFL) << 2;
+
+                if (branchTarget < length)
+                {
+                    MapLocation modern = findValidatedMap(
+                        provider,
+                        reader,
+                        branchTarget,
+                        branchTarget + 0x1000,
+                        true);
+
+                    if (modern != null)
+                        return modern;
+                }
+            }
+        }
+
+        // Pre-17.0.0 kernels store absolute map offsets near the beginning of
+        // the kernel. Prefer structural validation plus the INI1 boundary.
+        MapLocation legacy = findValidatedMap(provider, reader, 0, 0x1000, false);
+        if (legacy != null)
+            return legacy;
+
+        // Preserve the loader's original marker-based fallback for older
+        // kernels that do not satisfy the stronger structural check above.
+        reader.setPointerIndex(0);
+        long markerSearchEnd = Math.min(0x2000, length);
+
+        while (reader.getPointerIndex() + 4 <= markerSearchEnd)
+        {
+            long markerOffset = reader.getPointerIndex();
+            long candidate = reader.readNextUnsignedInt();
+
+            if (candidate == LEGACY_MAP_MARKER)
+            {
+                long mapOffset = markerOffset - COMMON_MAP_SIZE;
+
+                if (mapOffset >= 0)
+                    return new MapLocation(Math.toIntExact(mapOffset), 0);
+            }
+        }
+
+        return null;
     }
     
     private void read() throws IOException
     {
         Msg.info(this, "Reading...");
-        
-        this.fileReader.setPointerIndex(0);
-        
-        while (this.fileReader.getPointerIndex() < 0x2000)
-        {
-            long candidate = this.fileReader.readNextInt();
-            
-            if (candidate == 0xD51C403E)
-            {
-                break;
-            }
-        }
-        
-        if (this.fileReader.getPointerIndex() >= 0x2000)
-            throw new RuntimeException("Failed to find map offset");
-        
-        long mapOffset = this.fileReader.getPointerIndex() - 0x34;
-        this.map = new KNXMapHeader(this.fileReader, (int)mapOffset);
+
+        MapLocation mapLocation = findMap(this.fileProvider);
+        if (mapLocation == null)
+            throw new IOException("Failed to find kernel map");
+
+        this.map = new KNXMapHeader(this.fileReader, mapLocation.offset, mapLocation.adjustment);
         
         long textOffset = this.map.getTextFileOffset();
         long rodataOffset = this.map.getRodataFileOffset();
@@ -71,6 +190,7 @@ public class KNXAdapter extends MOD0Adapter
         long rodataSize = this.map.getRodataSize();
         long dataSize = this.map.getDataSize();
 
+        Msg.info(this, String.format("Kernel map offset: 0x%X", mapLocation.offset));
         Msg.info(this, String.format("Text size: 0x%X", textSize));
         
         // The data section is last, so we use its offset + decompressed size
