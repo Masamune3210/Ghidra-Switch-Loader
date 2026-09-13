@@ -28,36 +28,91 @@ public class KNXMapHeader
     
     public KNXMapHeader(BinaryReader reader, int readerOffset)
     {
+        this(reader, readerOffset, 0);
+    }
+
+    public KNXMapHeader(BinaryReader reader, int readerOffset, long adjustment)
+    {
         long prevPointerIndex = reader.getPointerIndex();
         
         reader.setPointerIndex(readerOffset);
-        this.readHeader(reader);
+        this.readHeader(reader, adjustment);
         
         // Restore the previous pointer index
         reader.setPointerIndex(prevPointerIndex);
     }
 
-    private void readHeader(BinaryReader reader)
+    private static long adjustOffset(long value, long adjustment)
+    {
+        // Kernel map offsets are 32-bit values. On 17.0.0+ they are relative
+        // to the map itself and may represent negative offsets, so mirror the
+        // uint32_t wraparound used by Nintendo/hactool when rebasing them.
+        return (value + adjustment) & 0xFFFFFFFFL;
+    }
+
+    private void readHeader(BinaryReader reader, long adjustment)
     {
         try 
         {
-            this.textOffset = reader.readNextUnsignedInt();
-            this.textEndOffset = reader.readNextUnsignedInt();
-            this.rodataOffset = reader.readNextUnsignedInt();
-            this.rodataEndOffset = reader.readNextUnsignedInt();
-            this.dataOffset = reader.readNextUnsignedInt();
-            this.dataEndOffset = reader.readNextUnsignedInt();
-            this.bssOffset = reader.readNextUnsignedInt();
-            this.bssEndOffset = reader.readNextUnsignedInt();
-            this.ini1Offset = reader.readNextUnsignedInt();
-            this.dynamicOffset = reader.readNextUnsignedInt();
-            this.initArrayOffset = reader.readNextUnsignedInt();
-            this.initArrayEndOffset = reader.readNextUnsignedInt();
+            this.textOffset = adjustOffset(reader.readNextUnsignedInt(), adjustment);
+            this.textEndOffset = adjustOffset(reader.readNextUnsignedInt(), adjustment);
+            this.rodataOffset = adjustOffset(reader.readNextUnsignedInt(), adjustment);
+            this.rodataEndOffset = adjustOffset(reader.readNextUnsignedInt(), adjustment);
+            this.dataOffset = adjustOffset(reader.readNextUnsignedInt(), adjustment);
+            this.dataEndOffset = adjustOffset(reader.readNextUnsignedInt(), adjustment);
+            this.bssOffset = adjustOffset(reader.readNextUnsignedInt(), adjustment);
+            this.bssEndOffset = adjustOffset(reader.readNextUnsignedInt(), adjustment);
+            this.ini1Offset = adjustOffset(reader.readNextUnsignedInt(), adjustment);
+            this.dynamicOffset = adjustOffset(reader.readNextUnsignedInt(), adjustment);
+            this.initArrayOffset = adjustOffset(reader.readNextUnsignedInt(), adjustment);
+            this.initArrayEndOffset = adjustOffset(reader.readNextUnsignedInt(), adjustment);
         } 
         catch (IOException e) 
         {
             Msg.error(this, "Failed to read KNX Map header");
         }
+    }
+
+    public boolean isValid(long maxSize)
+    {
+        if (maxSize < 0)
+            return false;
+
+        if (this.textOffset != 0)
+            return false;
+        if (this.textOffset >= this.textEndOffset)
+            return false;
+        if ((this.textEndOffset & 0xFFF) != 0)
+            return false;
+        if (this.textEndOffset > this.rodataOffset)
+            return false;
+        if ((this.rodataOffset & 0xFFF) != 0)
+            return false;
+        if (this.rodataOffset >= this.rodataEndOffset)
+            return false;
+        if ((this.rodataEndOffset & 0xFFF) != 0)
+            return false;
+        if (this.rodataEndOffset > this.dataOffset)
+            return false;
+        if ((this.dataOffset & 0xFFF) != 0)
+            return false;
+        if (this.dataOffset >= this.dataEndOffset)
+            return false;
+        if (this.dataEndOffset > this.bssOffset)
+            return false;
+        if (this.bssOffset > this.bssEndOffset)
+            return false;
+        if (this.bssEndOffset > this.ini1Offset)
+            return false;
+
+        // A full package2 kernel contains INI1 at ini1Offset. A kernel-only
+        // image may intentionally be truncated exactly at that boundary.
+        if (this.ini1Offset > maxSize)
+            return false;
+        if (this.ini1Offset < maxSize && maxSize - this.ini1Offset < 0x10)
+            return false;
+
+        return true;
     }
     
     public long getTextFileOffset()
@@ -98,6 +153,11 @@ public class KNXMapHeader
     public long getBssSize()
     {
         return this.bssEndOffset - this.bssOffset;
+    }
+
+    public long getIni1FileOffset()
+    {
+        return this.ini1Offset;
     }
     
     public long getDynamicOffset()
