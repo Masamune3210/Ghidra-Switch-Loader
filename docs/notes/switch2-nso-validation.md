@@ -2,7 +2,7 @@
 
 **Branch:** `note-working/switch2-nso-validation`  
 **Base:** `note-working/modern-kernel-loader` at `986b3b3791066d0eb216b9c5b7b34bf4f130c1f1` (do not rewrite the modern-kernel work).  
-**Status:** source changes committed; full Ghidra extension build/import **not yet verified**.
+**Status:** plain-JDK synthetic validation and the Pokopia negative regression test **passed on Windows** (reported by user, 2026-11-13); full Ghidra extension build/import **not yet verified**.
 
 ## Why this branch exists
 
@@ -37,10 +37,12 @@ java -cp build/nso-smoke adubbz.nx.loader.nso0.NSO0LayoutValidatorSmokeTest "G:\
 
 The synthetic test should print `Synthetic NSO0 layout validation: PASS`. The Pokopia test should print a **DATA stored extent** rejection and `fileSize=0x1C0ABC8`; a rejection is the correct result for that NSO. Building the full extension requires `GHIDRA_INSTALL_DIR`, the Ghidra SDK and the repository's Gradle dependencies.
 
-**Not run by assistant:** Ghidra extension build and actual imports, so compile/runtime validation is still open.
+**Verified by user on Windows (2026-11-13):** `javac -d build/nso-smoke src/main/java/adubbz/nx/loader/nso0/NSO0LayoutValidator.java tools/NSO0LayoutValidatorSmokeTest.java` completed successfully. Running `java -cp build/nso-smoke adubbz.nx.loader.nso0.NSO0LayoutValidatorSmokeTest "G:\Users\Johnny\Downloads\yes\pokopia.main.nso"` printed `Synthetic NSO0 layout validation: PASS` and `Real NSO0 section bounds: REJECTED: NSO0 DATA stored extent invalid: fileOffset=0x1B51843 storedSize=0xB9759 end=0x1C0AF9C fileSize=0x1C0ABC8`. Both are expected: the real file is a deliberate negative test.
+
+**Not yet verified:** full Gradle/Ghidra extension build, import into Ghidra, valid Switch 1 NSO compatibility or the separate Fire Emblem Switch 2 executable.
 
 ## Next
 
-1. Run the focused plain-JDK tests, build the extension and import a known-valid Switch 1 NSO for regression coverage.
+1. **Plain-JDK validator tests are complete.** Build the full extension (`.\gradlew.bat`) and import a known-valid Switch 1 NSO for regression coverage.
 2. Import an actual Switch 2 NSO (such as the Fire Emblem file in the screenshot) and capture the earliest loader error if one occurs.
 3. Only then add targeted format/layout support. Keep all experimental changes on this branch until verified, and do not merge into `modern-kernel-loader` or the default branch without request.
