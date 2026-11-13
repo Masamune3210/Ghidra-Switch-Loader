@@ -19,7 +19,10 @@ import ghidra.util.Msg;
 import ghidra.util.exception.NotFoundException;
 
 import java.io.IOException;
-import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
+import adubbz.nx.common.NXRelocation;
+import adubbz.nx.loader.nxo.NXOSectionType;
 
 /*
  * An adapter implementation for binaries with a MOD0 section.
@@ -104,55 +107,99 @@ public abstract class MOD0Adapter extends NXOAdapter
 
     private long gotOffset = 0;
     private long gotSize = 0;
+    private boolean gotExamined = false;
 
-    private boolean findGot() {
+    private boolean findGot()
+    {
         assert this.program != null;
 
-        if (this.gotOffset > 0 && this.gotSize > 0) {
-            return true;
-        }
+        // One negative result is enough. Import code queries both offset and
+        // size repeatedly, including after attempting to create the block.
+        if (gotExamined)
+            return gotSize > 0;
+        gotExamined = true;
 
         MOD0Header mod0 = this.getMOD0();
-
-        if (mod0 == null) {
+        if (mod0 == null)
             return false;
-        }
 
-        if (mod0.hasLibnxExtension()) {
-            this.gotOffset = mod0.getLibnxGotStart() + this.program.getImageBase().getOffset();
+        long imageBase = program.getImageBase().getOffset();
+
+        if (mod0.hasLibnxExtension())
+        {
+            this.gotOffset = mod0.getLibnxGotStart() + imageBase;
             this.gotSize = mod0.getLibnxGotEnd() - mod0.getLibnxGotStart();
-            return true;
+            return gotSize > 0;
         }
 
-        boolean good = false;
-        List<Long> relocationOffsets = this.getRelocations(program).stream().map(reloc -> reloc.offset).toList();
-        MemoryBlock gotPlt = this.program.getMemory().getBlock(".got.plt");
-        long gotStart = gotPlt != null ? gotPlt.getEnd().getOffset() + 1 - this.program.getImageBase().getOffset() : this.getDynamicOffset() + this.getDynamicSize();
-        long gotEnd = gotStart + this.getOffsetSize();
+        // The old heuristic started AFTER .got.plt when it was present.
+        // On modern NSOs, the ordinary GOT instead sits BETWEEN the end of
+        // .dynamic and the start of .got.plt, with relocated pointer slots
+        // throughout. Both ends are section anchors, not guessed addresses.
+        Set<Long> relocationOffsets = new HashSet<>();
+        for (NXRelocation reloc : this.getRelocations(program))
+            relocationOffsets.add(reloc.offset);
+
+        MemoryBlock gotPlt = program.getMemory().getBlock(".got.plt");
+        long dynamicEnd = this.getDynamicOffset() + this.getDynamicSize();
+        int pointerSize = this.getOffsetSize();
+
+        if (gotPlt != null)
+        {
+            NXOSection dataSection = getSection(NXOSectionType.DATA);
+            long pltStart = gotPlt.getStart().getOffset() - imageBase;
+            long[] range = GotRegionDetector.detectBeforePlt(
+                dynamicEnd, pltStart, dataSection.getOffset(), dataSection.getSize(),
+                pointerSize, relocationOffsets);
+
+            if (range != null)
+            {
+                gotOffset = imageBase + range[0];
+                gotSize = range[1] - range[0];
+                Msg.info(this, String.format(
+                    "Located pre-PLT .got: relative 0x%X..0x%X (size 0x%X)",
+                    range[0], range[1], gotSize));
+                return true;
+            }
+        }
+
+        // Preserve legacy behavior for older Switch modules. A HashSet
+        // avoids thousands of linear scans through large RELR tables.
+        long gotStart = gotPlt != null
+            ? gotPlt.getEnd().getOffset() + 1 - imageBase
+            : dynamicEnd;
+        long gotEnd = gotStart + pointerSize;
         long initArrayValue;
 
-        try {
-            initArrayValue = this.getDynamicTable(program).getDynamicValue(ElfDynamicType.DT_INIT_ARRAY);
-        } catch (NotFoundException ignored) {
+        try
+        {
+            initArrayValue = this.getDynamicTable(program).getDynamicValue(
+                ElfDynamicType.DT_INIT_ARRAY);
+        }
+        catch (NotFoundException ignored)
+        {
             initArrayValue = -1;
         }
 
-        while ((relocationOffsets.contains(gotEnd) || (gotPlt == null && initArrayValue != -1 && gotEnd < initArrayValue))
-                && (initArrayValue == -1 || gotEnd < initArrayValue || gotStart > initArrayValue)) {
-            good = true;
-            gotEnd += this.getOffsetSize();
+        while ((relocationOffsets.contains(gotEnd) ||
+                (gotPlt == null && initArrayValue != -1 && gotEnd < initArrayValue)) &&
+                (initArrayValue == -1 || gotEnd < initArrayValue ||
+                 gotStart > initArrayValue))
+        {
+            gotEnd += pointerSize;
         }
 
-        if (good) {
-            this.gotOffset = this.program.getImageBase().getOffset() + gotStart;
-            this.gotSize = gotEnd - gotStart;
+        if (gotEnd > gotStart + pointerSize)
+        {
+            gotOffset = imageBase + gotStart;
+            gotSize = gotEnd - gotStart;
             return true;
         }
 
-        Msg.error(this, "Failed to find .got section.");
+        Msg.warn(this, "Unable to identify .got section using dynamic anchors and relocation targets.");
         return false;
     }
-    
+
     @Override
     public long getGotOffset()
     {
