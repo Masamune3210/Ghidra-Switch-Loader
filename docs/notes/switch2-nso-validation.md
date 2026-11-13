@@ -2,7 +2,7 @@
 
 **Branch:** `note-working/switch2-nso-validation`  
 **Base:** `note-working/modern-kernel-loader` at `986b3b3791066d0eb216b9c5b7b34bf4f130c1f1` (do not rewrite the modern-kernel work).  
-**Status:** Plain-JDK NSO tests passed, Pokopia correctly rejected, and Fire Emblem `main` imported in Ghidra 12.1.3. **Current version: 1.6.5. Skip 1.6.4**, whose automatic whole-gap GOT classification was withdrawn as overpermissive. GOT start/end remain unproven; run the read-only `ValidateSwitchGot.java` probe. Bump the patch number with every future buildable revision.
+**Status:** Fire Emblem `main` imports in Ghidra 12.1.3; NSO validation regressions previously passed. **Current extension version: 1.6.6.** `ValidateSwitchGot` now establishes an exactly contiguous, typed-relocation-backed GOT interval (not the original full gap). Automatic detection is implemented with fail-closed safeguards, but the 1.6.6 build and a fresh Ghidra import are not yet verified. Versions 1.6.4 and 1.6.5 were intermediate experiments, not final GOT fixes. Bump the patch number for each subsequent buildable change.
 
 ## Why this branch exists
 
@@ -95,3 +95,44 @@ The 1.6.4 detector classified the entire `0x212BF08..0x2137FE8` gap as `.got` us
 ### Next action
 
 With the existing Fire Emblem `main` database open in Ghidra's CodeBrowser, run **`ValidateSwitchGot.java`** via Script Manager and share its output. The script only reads the current program; no reimport and no new extension installation are required. If the current extension itself needs rebuilding, use version **1.6.5**, never 1.6.4.
+
+
+## 2026-11-13: 1.6.6, contiguous typed relocation GOT boundary established
+
+**New user-provided `ValidateSwitchGot.java` output (Fire Emblem `main`, image base `0x7100000000`):**
+
+- Candidate `[0x212BF08, 0x2137FE8)`, but the **real contiguous relocated prefix ends earlier**.
+- The `GLOB_DAT` set is **55/55 inside** the candidate, all import pointers resolve into Ghidra's artificial `EXTERNAL` block. `DT_RELR` contributes **5,989** relocated pointer slots inside. **Zero** ABS64 and JUMP_SLOT target locations inside. Those other relocation families occur outside this region.
+- The first 11 probe bins contain exactly **512/512** relocated slots each. The 12th contains **404 RELR + 8 GLOB_DAT = 412** consecutive relocated slots followed by **100 zero** slots. The final bin adds **28 zero** slots. All nonzero relocated slots point to mapped memory, there are no absent or mixed-type slots in the prefix.
+- Therefore **6,044 consecutive 8-byte relocated pointers** exist starting at `0x212BF08`, occupying **`0xBCE0` bytes**, and ending at **`0x2137BE8` exclusive**. The following **`0x400` bytes** are zero padding, then the independently established `.got.plt` begins at `0x2137FE8`.
+- The strongest supported identification is **ordinary `.got`: image-relative `[0x212BF08, 0x2137BE8)`, absolute `[0x710212BF08, 0x7102137BE8)`**, 6,044 pointer slots. Exact absolute last byte `0x7102137BE7`; last pointer starts at `0x7102137BE0`. The earlier guessed end `0x2137FE8` incorrectly included `0x400` zero bytes, so do **not** propagate that old boundary.
+
+**Source changes (Ghidra `note-working/switch2-nso-validation`):**
+
+- Added pure-Java `GotRelocationEvidence.detect`. It requires an AArch64 `.dynamic`-end and an independently defined `.got.plt` start within DATA, exact 8-byte alignment, a single contiguous prefix with **only `R_AARCH64_GLOB_DAT` and expanded `DT_RELR`** per slot, at least one of each, at least 16 total slots, **no ABS64/other relocations or overlaps**, followed by no relocations and **all-zero original image padding**, with bounded gap and padding lengths. If any condition fails, it returns no candidate. The algorithm is per-binary, not hardcoded to this title or ExeFS grouping.
+- `MOD0Adapter.findGot()` groups the existing `NXRelocation` objects by type (`R_AARCH64_GLOB_DAT=1025`, `ElfCompatibilityProvider.R_FAKE_RELR=-1`, everything else), probes this exact prefix when `.got.plt` exists, retains the historical heuristic as fallback, and caches the result. The existing `NXProgramBuilder` can create the precise `.got` memory block and pointer datatypes during a **new import**.
+- Added `tools/GotRelocationEvidenceSmokeTest.java` with the **55 actual `GLOB_DAT` positions** from the user's output and 5,989 complementary RELR positions, checking the exact `0xBCE0` region and refusing ABS64 overlap, mid-region gaps, padding relocations/nonzero padding, out-of-DATA bounds, and an all-RELR range without import evidence.
+- Bumped `gradle.properties` **1.6.5 -> 1.6.6**. The specific loader change and test are **not yet compiled or exercised in Ghidra**. Previous successful NSO import validates compression/mapping only, not this updated `.got` behavior.
+
+**Ghidra database metadata, directly applicable for the existing Fire Emblem `main` (confirmed by relocation type and slot coverage):**
+
+```text
+Address range: 0x710212BF08 - 0x7102137BE7
+Label/block: .got
+Type: pointer[6044]
+Length: 0xBCE0 bytes
+Next range: 0x7102137BE8 - 0x7102137FE7
+Type: undefined1[1024] (zero padding; DO NOT add to .got)
+Existing .got.plt: 0x7102137FE8 - 0x7102139A0F
+```
+
+**Next verification (one terminal command per line):**
+
+```powershell
+javac -d build/got-evidence src/main/java/adubbz/nx/loader/nxo/GotRelocationEvidence.java tools/GotRelocationEvidenceSmokeTest.java
+java -cp build/got-evidence adubbz.nx.loader.nxo.GotRelocationEvidenceSmokeTest
+.\gradlew.bat
+```
+
+Install **1.6.6**, restart Ghidra, reimport Fire Emblem `main` into a **new program** and check that the loader says `Located relocation-complete .got`, creates `.got` as **0xBCE0** bytes ending **before** the 0x400 zero padding, and still creates `.got.plt` without overlap. If either test or import fails, inspect the actual error and correct only the involved code. Do not merge this branch into `modern-kernel-loader` until verified.
+
