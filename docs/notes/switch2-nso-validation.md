@@ -2,7 +2,7 @@
 
 **Branch:** `note-working/switch2-nso-validation`  
 **Base:** `note-working/modern-kernel-loader` at `986b3b3791066d0eb216b9c5b7b34bf4f130c1f1` (do not rewrite the modern-kernel work).  
-**Status:** plain-JDK tests passed; real Pokopia boundary error correctly rejected; Fire Emblem Fortune's Weave `main` **successfully imported in Ghidra 12.1.3** with ZBIC sections and relocations. `.got` detection remains unresolved. Current extension version **1.6.3**, and the patch number must increase with every future buildable source change.
+**Status:** plain-JDK NSO tests passed; real Pokopia boundary error correctly rejected; Fire Emblem Fortune's Weave `main` successfully imported in Ghidra 12.1.3. Its `.got` detection issue is now addressed in **unverified extension version 1.6.4**, using the user's read-only relocation probe to anchor the candidate region. Reimport and test are pending. Increment the patch number on every subsequent buildable change.
 
 ## Why this branch exists
 
@@ -67,5 +67,26 @@ The synthetic test should print `Synthetic NSO0 layout validation: PASS`. The Po
 
 **Separate metadata file:** User also provided `main.npdm` (1,828 bytes, SHA-256 `e61248bb2ab85a6274eb174b7d78d4188187b20e87b3b135cf0e1b28fbd22ff0`). It contains `META` at 0x0, extended ACID header at 0x380 (ACID block base 0x80 and 0x300-byte signature/key area), and ACI0 at 0x560. ACI Program ID `0x04007EF01F8AE000`, main thread priority 44, stack `0x100000`, system resource size `0x1800000`. ACI and ACID service-access descriptors each contain 46 entries. This can be parsed **independently** as NPDM data if such functionality is added; it is not a prerequisite to loading an NSO.
 
-**Next action:** Wait for read-only `ProbeSwitchGot.java` output from imported Fire Emblem `main` to identify its actual GOT region before changing `MOD0Adapter.findGot()`. Keep each module's decompilation/address space distinct. Version remains `1.6.3`; this is a handoff-only update and does not produce different extension bytes.
+**Next action (revised):** `ProbeSwitchGot.java` output was received and guided the new relocation-backed `.got` path in version `1.6.4` (detailed below). Build/install that version and **reimport** Fire Emblem `main`; the previously imported Ghidra database will not automatically gain a newly discovered section. Continue to treat every NSO as an independent file.
+
+
+## 2026-11-13: GOT probe completed; pre-PLT detection in 1.6.4
+
+- **User-provided `ProbeSwitchGot.java` output, Fire Emblem `main`:** image base `0x7100000000`, `.dynamic=0x710212BD48..0x710212BF07` (0x1C0), `.got.plt=0x7102137FE8..0x7102139A0F` (0x1A28). `DT_PLTGOT=0x2137FE8`, `DT_RELA=0x1A0D068`, `DT_RELASZ=0x58248`, `DT_JMPREL=0x1A652B0`, `DT_PLTRELSZ=0x4E30`, `DT_RELR=0x1A6A0E0`, `DT_RELRSZ=0x8098`. `.rela.dyn`: 15,043 entries (`1025=55`, `257=14,988`); `.rela.plt`: 834 entries (`1026=834`) with exactly one contiguous target range `0x2138000..0x2139A10` (end-exclusive, validating `.got.plt`). `.relr.dyn`: 218,170 targets, with dense runs including `0x212C968..0x212DD70` and `0x2135450..0x2137BA8`. `.rela.dyn` also has `0x212C540..0x212C598`. All addresses in the probe's relocation clusters are image-relative.
+- **Determination:** The original `MOD0Adapter.findGot()` searched for `.got` immediately **after the end of `.got.plt`** (`0x2139A10`), while the observed layout has relocation-bearing data immediately following the end of `.dynamic`, **before** `.got.plt`. The **candidate ordinary GOT** is image-relative `0x212BF08..0x2137FE8` (exclusive), absolute `0x710212BF08..0x7102137FE8` (exclusive), length `0xC0E0` (6,172 8-byte slots). This is a derived section range awaiting a real reimport, not a claim that every slot was manually verified as a pointer.
+- **Implemented** `src/main/java/adubbz/nx/loader/nxo/GotRegionDetector.java` as a pure-Java candidate detector. It requires both anchors within the NSO DATA region, valid pointer alignment, at least 16 relocation targets inside, and relocation evidence within 0x1000 of **both** bounds. No title-specific hardcoded offsets.
+- **Implemented** `MOD0Adapter.findGot()` to try this relocation-backed pre-PLT range when a `.got.plt` block exists, **before** the original legacy heuristic (which is retained). Converted lookup membership to `HashSet`, avoiding expensive repeated linear searches over `DT_RELR` targets. Cached both success and failure so no more triple error log for absent GOT. `NXProgramBuilder` will create the `.got` block and pointer annotations using the detected range on *fresh* imports.
+- **Added** `tools/GotRegionDetectorSmokeTest.java`: standalone JDK test with actual Fire Emblem anchor values and representative relocation runs, plus negative cases for invalid bounds, absent edge evidence, invalid pointer size, and unrelated relocations.
+- **Extension version bumped** in `gradle.properties` from `1.6.3` to `1.6.4`. The ZIP name includes the numeric version and commit hash, and the extension metadata receives the version.
+- **Verification status:** code/tests committed, **not built or run in Ghidra yet**. Only the user's *old* `1.6.3` `ProbeSwitchGot` results are verified. Keep previous successful ZBIC import and Pokopia negative extent results as distinct evidence. No merge to `modern-kernel-loader` or `master`.
+
+### Next verification (each command on one line)
+
+```powershell
+javac -d build/got-smoke src/main/java/adubbz/nx/loader/nxo/GotRegionDetector.java tools/GotRegionDetectorSmokeTest.java
+java -cp build/got-smoke adubbz.nx.loader.nxo.GotRegionDetectorSmokeTest
+.\gradlew.bat
+```
+
+Install the newly built **1.6.4** ZIP in Ghidra, restart, and **reimport Fire Emblem's loose `main` as a new program**, rather than expecting the old database to gain the new `.got` automatically. Expected derived GOT `0x710212BF08..0x7102137FE7` inclusive, separate from `.got.plt` at `0x7102137FE8`. Check whether `Located pre-PLT .got` and `Created got` appear in the log, and confirm normal imports/relocations still work. If the new candidate produces an annotation/overlap issue, follow the actual error, do not disable validation.
 
