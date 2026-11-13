@@ -17,9 +17,9 @@ import adubbz.nx.loader.nxo.NXOSectionType;
 import ghidra.app.util.bin.ByteArrayProvider;
 import ghidra.app.util.bin.ByteProvider;
 import ghidra.program.model.listing.Program;
-import ghidra.util.Msg;
 import net.jpountz.lz4.LZ4Factory;
-import net.jpountz.lz4.LZ4FastDecompressor;
+import net.jpountz.lz4.LZ4Exception;
+import net.jpountz.lz4.LZ4SafeDecompressor;
 
 public class NSO0Adapter extends MOD0Adapter
 {
@@ -38,8 +38,7 @@ public class NSO0Adapter extends MOD0Adapter
         }
         catch (IOException e)
         {
-            Msg.error(this, "Failed to read NSO0");
-            e.printStackTrace();
+            throw new IllegalArgumentException("Cannot read NSO0: " + e.getMessage(), e);
         }
     }
     
@@ -48,7 +47,7 @@ public class NSO0Adapter extends MOD0Adapter
         this.nso0 = new NSO0Header(this.fileReader, 0x0);
 
         LZ4Factory factory = LZ4Factory.fastestInstance();
-        LZ4FastDecompressor lz4 = factory.fastDecompressor();
+        LZ4SafeDecompressor lz4 = factory.safeDecompressor();
 
         NSO0SectionHeader textHeader  = this.nso0.getSectionHeader(NXOSectionType.TEXT);
         NSO0SectionHeader rodataHeader = this.nso0.getSectionHeader(NXOSectionType.RODATA);
@@ -61,7 +60,25 @@ public class NSO0Adapter extends MOD0Adapter
         long rodataSize  = rodataHeader.getDecompressedSize();
         long dataSize    = dataHeader.getDecompressedSize();
 
-        byte[] full = new byte[Math.toIntExact(dataOffset + dataSize)];
+        long[] fileOffsets = new long[3];
+        long[] storedSizes = new long[3];
+        long[] memoryOffsets = { textOffset, rodataOffset, dataOffset };
+        long[] memorySizes = { textSize, rodataSize, dataSize };
+        for (NXOSectionType type : new NXOSectionType[] {
+            NXOSectionType.TEXT, NXOSectionType.RODATA, NXOSectionType.DATA })
+        {
+            int index = type.ordinal();
+            fileOffsets[index] = this.nso0.getSectionFileOffset(type);
+            storedSizes[index] = this.nso0.isSectionCompressed(type)
+                ? this.nso0.getCompressedSectionSize(type)
+                : memorySizes[index];
+        }
+
+        // A 0x3F NSO is not necessarily valid LZ4 just because its flags
+        // request LZ4. Verify physical extents before reading or decoding.
+        int imageLength = NSO0LayoutValidator.validate(
+            this.fileProvider.length(), fileOffsets, storedSizes, memoryOffsets, memorySizes);
+        byte[] full = new byte[imageLength];
 
         boolean isZbic = this.nso0.isZbic();
 
@@ -92,9 +109,12 @@ public class NSO0Adapter extends MOD0Adapter
     }
 
     private byte[] decompressSection(NXOSectionType type, long decompSize,
-                                    boolean isZbic, LZ4FastDecompressor lz4)
+                                    boolean isZbic, LZ4SafeDecompressor lz4)
         throws IOException
     {
+        if (decompSize == 0)
+            return new byte[0];
+
         if (!this.nso0.isSectionCompressed(type))
         {
             return this.fileProvider.readBytes(
@@ -126,7 +146,26 @@ public class NSO0Adapter extends MOD0Adapter
         else
         {
             byte[] out = new byte[Math.toIntExact(decompSize)];
-            lz4.decompress(compressed, out);
+            try
+            {
+                // Unlike the fast decoder, the safe decoder respects the
+                // compressed input length and reports a malformed block.
+                int decodedSize = lz4.decompress(
+                    compressed, 0, compressed.length, out, 0, out.length);
+                if (decodedSize != out.length)
+                {
+                    throw new IOException(String.format(
+                        "LZ4 %s size mismatch: decoded %d, expected %d",
+                        type, decodedSize, out.length));
+                }
+            }
+            catch (LZ4Exception e)
+            {
+                throw new IOException(String.format(
+                    "Invalid LZ4 %s section: stored=0x%X expanded=0x%X; " +
+                    "NSO flags may not describe actual segment compression",
+                    type, compressed.length, decompSize), e);
+            }
             return out;
         }
     }
