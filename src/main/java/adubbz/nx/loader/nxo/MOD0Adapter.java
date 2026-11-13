@@ -22,6 +22,8 @@ import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
 import adubbz.nx.common.NXRelocation;
+import ghidra.app.util.bin.format.elf.relocation.AARCH64_ElfRelocationType;
+import java.util.function.LongPredicate;
 
 /*
  * An adapter implementation for binaries with a MOD0 section.
@@ -134,17 +136,66 @@ public abstract class MOD0Adapter extends NXOAdapter
         // Conservative fallback for legacy binaries. The end of .dynamic
         // or .got.plt is only a starting anchor, not proof of a GOT section.
         Set<Long> relocationOffsets = new HashSet<>();
+        Set<Long> globDatTargets = new HashSet<>();
+        Set<Long> relrTargets = new HashSet<>();
+        Set<Long> otherTargets = new HashSet<>();
         for (NXRelocation reloc : this.getRelocations(program))
+        {
             relocationOffsets.add(reloc.offset);
+            if (reloc.r_type == AARCH64_ElfRelocationType.R_AARCH64_GLOB_DAT.typeId()
+                && reloc.sym != null)
+            {
+                globDatTargets.add(reloc.offset);
+            }
+            else if (reloc.r_type == ElfCompatibilityProvider.R_FAKE_RELR)
+            {
+                relrTargets.add(reloc.offset);
+            }
+            else
+            {
+                otherTargets.add(reloc.offset);
+            }
+        }
 
         MemoryBlock gotPlt = program.getMemory().getBlock(".got.plt");
         long dynamicEnd = this.getDynamicOffset() + this.getDynamicSize();
         int pointerSize = this.getOffsetSize();
 
-        // Do not label the entire space between .dynamic and .got.plt as
-        // GOT: RELR/ABS64 relocations also describe vtables and ordinary data.
-        // GLOB_DAT positions and code references must be examined first.
-        // The read-only ValidateSwitchGot script gathers that evidence.
+        // Some modern AArch64 modules place a fully relocated ordinary GOT
+        // immediately after .dynamic, before a separate .got.plt. A dense
+        // region of generic relocations is NOT enough to label a GOT: only
+        // accept a contiguous prefix composed entirely of GLOB_DAT and RELR,
+        // with zero-filled, unrelocated padding separating it from .got.plt.
+        if (!this.isAarch32() && gotPlt != null)
+        {
+            NXOSection data = getSection(NXOSectionType.DATA);
+            long pltStart = gotPlt.getStart().getOffset() - imageBase;
+            LongPredicate isZero = offset ->
+            {
+                try
+                {
+                    return getMemoryReader().readLong(offset) == 0;
+                }
+                catch (IOException e)
+                {
+                    return false;
+                }
+            };
+            long[] range = GotRelocationEvidence.detect(
+                dynamicEnd, pltStart, data.getOffset(), data.getSize(),
+                globDatTargets, relrTargets, otherTargets, isZero);
+            if (range != null)
+            {
+                gotOffset = imageBase + range[0];
+                gotSize = range[1] - range[0];
+                Msg.info(this, String.format(
+                    "Located relocation-complete .got: 0x%X..0x%X " +
+                    "(size 0x%X), preceding .got.plt at 0x%X",
+                    gotOffset, gotOffset + gotSize, gotSize,
+                    imageBase + pltStart));
+                return true;
+            }
+        }
 
         // Preserve legacy behavior for older Switch modules. A HashSet
         // avoids thousands of linear scans through large RELR tables.
