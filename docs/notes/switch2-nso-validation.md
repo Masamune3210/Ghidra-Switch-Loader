@@ -2,7 +2,7 @@
 
 **Branch:** `note-working/switch2-nso-validation`  
 **Base:** `note-working/modern-kernel-loader` at `986b3b3791066d0eb216b9c5b7b34bf4f130c1f1` (do not rewrite the modern-kernel work).  
-**Status:** plain-JDK NSO tests passed; real Pokopia boundary error correctly rejected; Fire Emblem Fortune's Weave `main` successfully imported in Ghidra 12.1.3. Its `.got` detection issue is now addressed in **unverified extension version 1.6.4**, using the user's read-only relocation probe to anchor the candidate region. Reimport and test are pending. Increment the patch number on every subsequent buildable change.
+**Status:** Plain-JDK NSO tests passed, Pokopia correctly rejected, and Fire Emblem `main` imported in Ghidra 12.1.3. **Current version: 1.6.5. Skip 1.6.4**, whose automatic whole-gap GOT classification was withdrawn as overpermissive. GOT start/end remain unproven; run the read-only `ValidateSwitchGot.java` probe. Bump the patch number with every future buildable revision.
 
 ## Why this branch exists
 
@@ -67,7 +67,7 @@ The synthetic test should print `Synthetic NSO0 layout validation: PASS`. The Po
 
 **Separate metadata file:** User also provided `main.npdm` (1,828 bytes, SHA-256 `e61248bb2ab85a6274eb174b7d78d4188187b20e87b3b135cf0e1b28fbd22ff0`). It contains `META` at 0x0, extended ACID header at 0x380 (ACID block base 0x80 and 0x300-byte signature/key area), and ACI0 at 0x560. ACI Program ID `0x04007EF01F8AE000`, main thread priority 44, stack `0x100000`, system resource size `0x1800000`. ACI and ACID service-access descriptors each contain 46 entries. This can be parsed **independently** as NPDM data if such functionality is added; it is not a prerequisite to loading an NSO.
 
-**Next action (revised):** `ProbeSwitchGot.java` output was received and guided the new relocation-backed `.got` path in version `1.6.4` (detailed below). Build/install that version and **reimport** Fire Emblem `main`; the previously imported Ghidra database will not automatically gain a newly discovered section. Continue to treat every NSO as an independent file.
+**Next action (updated):** The earlier GOT boundary guess is not established. Do not install `1.6.4` or reimport to test it. Instead run the read-only `ValidateSwitchGot.java` against the existing imported `main`; no new extension build is required for the script.
 
 
 ## 2026-11-13: GOT probe completed; pre-PLT detection in 1.6.4
@@ -80,13 +80,18 @@ The synthetic test should print `Synthetic NSO0 layout validation: PASS`. The Po
 - **Extension version bumped** in `gradle.properties` from `1.6.3` to `1.6.4`. The ZIP name includes the numeric version and commit hash, and the extension metadata receives the version.
 - **Verification status:** code/tests committed, **not built or run in Ghidra yet**. Only the user's *old* `1.6.3` `ProbeSwitchGot` results are verified. Keep previous successful ZBIC import and Pokopia negative extent results as distinct evidence. No merge to `modern-kernel-loader` or `master`.
 
-### Next verification (each command on one line)
+### Superseded: do not install 1.6.4
 
-```powershell
-javac -d build/got-smoke src/main/java/adubbz/nx/loader/nxo/GotRegionDetector.java tools/GotRegionDetectorSmokeTest.java
-java -cp build/got-smoke adubbz.nx.loader.nxo.GotRegionDetectorSmokeTest
-.\gradlew.bat
-```
+The 1.6.4 detector classified the entire `0x212BF08..0x2137FE8` gap as `.got` using generic relocation density and section anchors. That inference is **unproven**: `R_AARCH64_ABS64` and `DT_RELR` also describe vtables and ordinary pointer arrays. That detector and its permissive synthetic test were deleted in 1.6.5. The original GOT heuristic remains with an O(1) relocation membership set and cached lookup outcome, so unresolved GOT locations produce one warning rather than three.
 
-Install the newly built **1.6.4** ZIP in Ghidra, restart, and **reimport Fire Emblem's loose `main` as a new program**, rather than expecting the old database to gain the new `.got` automatically. Expected derived GOT `0x710212BF08..0x7102137FE7` inclusive, separate from `.got.plt` at `0x7102137FE8`. Check whether `Located pre-PLT .got` and `Created got` appear in the log, and confirm normal imports/relocations still work. If the new candidate produces an annotation/overlap issue, follow the actual error, do not disable validation.
+## 2026-11-13: evidence-based GOT verification in version 1.6.5
 
+- **Original probe findings:** `R_AARCH64_GLOB_DAT` (1025): 55 targets; `R_AARCH64_ABS64` (257): 14,988 targets; `R_AARCH64_JUMP_SLOT` (1026): 834 targets in `.got.plt`; `DT_RELR`: 218,170 targets. Only the type-1025 relocation targets strongly indicate ordinary GOT slots. These counts don't locate all 55 without listing their destinations, and none proves the full `0xC0E0` gap is GOT.
+- **New read-only script** `ghidra_scripts/ValidateSwitchGot.java` lists all `GLOB_DAT` targets and whether each is in the candidate range, pointer values, and mapped target sections. It also measures `GLOB_DAT`, `ABS64`, `JUMP_SLOT`, `RELR`, mapped/zero/unmapped values, and Ghidra-discovered code references in 4 KiB bins throughout the gap. Interpretation must respect incomplete code xrefs until auto-analysis finishes.
+- **Changes:** Disabled the automatic pre-PLT `GotRegionDetector` candidate assignment in `MOD0Adapter.findGot()` and removed `GotRegionDetector.java` plus `GotRegionDetectorSmokeTest.java`. Bumped `gradle.properties` from `1.6.4` to **`1.6.5`**.
+- **Verification:** `ValidateSwitchGot.java` **not yet run**; the new extension has **not been built or installed**. The user-supplied `ProbeSwitchGot.java` output is verified and the old Fire Emblem import succeeded. No confirmed ordinary `.got` region or pointer datatype redeclarations yet.
+- **Decision rule:** Inspect all 55 `GLOB_DAT` addresses and associated dynamic symbols, GOT-style code references (ADRP/LDR or similar), and the content/relocation density transitions before defining a memory block. Dense `RELR` or `ABS64` by itself is inadequate evidence. If no defensible boundary emerges, leave `.got` unidentified rather than mark arbitrary data as pointers.
+
+### Next action
+
+With the existing Fire Emblem `main` database open in Ghidra's CodeBrowser, run **`ValidateSwitchGot.java`** via Script Manager and share its output. The script only reads the current program; no reimport and no new extension installation are required. If the current extension itself needs rebuilding, use version **1.6.5**, never 1.6.4.
