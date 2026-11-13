@@ -2,7 +2,7 @@
 
 **Branch:** `note-working/switch2-nso-validation`  
 **Base:** `note-working/modern-kernel-loader` at `986b3b3791066d0eb216b9c5b7b34bf4f130c1f1` (do not rewrite the modern-kernel work).  
-**Status:** plain-JDK synthetic validation and the Pokopia negative regression test **passed on Windows** (reported by user, 2026-11-13); full Ghidra extension build/import **not yet verified**.
+**Status:** plain-JDK synthetic validation and two real-file boundary checks **passed on Windows** (Pokopia correctly rejected; Fire Emblem Fortune's Weave `main` correctly accepted); full Ghidra extension build/import **not yet verified**.
 
 ## Why this branch exists
 
@@ -39,10 +39,12 @@ The synthetic test should print `Synthetic NSO0 layout validation: PASS`. The Po
 
 **Verified by user on Windows (2026-11-13):** `javac -d build/nso-smoke src/main/java/adubbz/nx/loader/nso0/NSO0LayoutValidator.java tools/NSO0LayoutValidatorSmokeTest.java` completed successfully. Running `java -cp build/nso-smoke adubbz.nx.loader.nso0.NSO0LayoutValidatorSmokeTest "G:\Users\Johnny\Downloads\yes\pokopia.main.nso"` printed `Synthetic NSO0 layout validation: PASS` and `Real NSO0 section bounds: REJECTED: NSO0 DATA stored extent invalid: fileOffset=0x1B51843 storedSize=0xB9759 end=0x1C0AF9C fileSize=0x1C0ABC8`. Both are expected: the real file is a deliberate negative test.
 
-**Not yet verified:** full Gradle/Ghidra extension build, import into Ghidra, valid Switch 1 NSO compatibility or the separate Fire Emblem Switch 2 executable.
+**Further user verification (2026-11-13):** `java -cp build/nso-smoke adubbz.nx.loader.nso0.NSO0LayoutValidatorSmokeTest "G:\Users\Johnny\Downloads\yes\Fire Emblem Fortune's Weave\base\exefs\main"` produced `Synthetic NSO0 layout validation: PASS` and `Real NSO0 section bounds: PASS`. This proves that the **physical NSO section extent checks** accept the Fire Emblem loose `main`, in contrast with the Pokopia negative test. No compressed sections were decoded by this smoke test.
+
+**Not yet verified:** full Gradle/Ghidra extension build or actual Ghidra import/decompression of Fire Emblem; valid Switch 1 NSO regression compatibility.
 
 ## Next
 
 1. **Plain-JDK validator tests are complete.** Build the full extension (`.\gradlew.bat`) and import a known-valid Switch 1 NSO for regression coverage.
-2. Import an actual Switch 2 NSO (such as the Fire Emblem file in the screenshot) and capture the earliest loader error if one occurs.
+2. Import the Fire Emblem Fortune's Weave loose `base/exefs/main` with the newly built Ghidra extension. The independent boundary test already **passed**; verify actual section decompression, MOD0/ELF analysis and mappings, and report the first error if import fails.
 3. Only then add targeted format/layout support. Keep all experimental changes on this branch until verified, and do not merge into `modern-kernel-loader` or the default branch without request.
