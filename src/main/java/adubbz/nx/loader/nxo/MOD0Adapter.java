@@ -22,7 +22,6 @@ import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
 import adubbz.nx.common.NXRelocation;
-import adubbz.nx.loader.nxo.NXOSectionType;
 
 /*
  * An adapter implementation for binaries with a MOD0 section.
@@ -132,10 +131,8 @@ public abstract class MOD0Adapter extends NXOAdapter
             return gotSize > 0;
         }
 
-        // The old heuristic started AFTER .got.plt when it was present.
-        // On modern NSOs, the ordinary GOT instead sits BETWEEN the end of
-        // .dynamic and the start of .got.plt, with relocated pointer slots
-        // throughout. Both ends are section anchors, not guessed addresses.
+        // Conservative fallback for legacy binaries. The end of .dynamic
+        // or .got.plt is only a starting anchor, not proof of a GOT section.
         Set<Long> relocationOffsets = new HashSet<>();
         for (NXRelocation reloc : this.getRelocations(program))
             relocationOffsets.add(reloc.offset);
@@ -144,24 +141,10 @@ public abstract class MOD0Adapter extends NXOAdapter
         long dynamicEnd = this.getDynamicOffset() + this.getDynamicSize();
         int pointerSize = this.getOffsetSize();
 
-        if (gotPlt != null)
-        {
-            NXOSection dataSection = getSection(NXOSectionType.DATA);
-            long pltStart = gotPlt.getStart().getOffset() - imageBase;
-            long[] range = GotRegionDetector.detectBeforePlt(
-                dynamicEnd, pltStart, dataSection.getOffset(), dataSection.getSize(),
-                pointerSize, relocationOffsets);
-
-            if (range != null)
-            {
-                gotOffset = imageBase + range[0];
-                gotSize = range[1] - range[0];
-                Msg.info(this, String.format(
-                    "Located pre-PLT .got: relative 0x%X..0x%X (size 0x%X)",
-                    range[0], range[1], gotSize));
-                return true;
-            }
-        }
+        // Do not label the entire space between .dynamic and .got.plt as
+        // GOT: RELR/ABS64 relocations also describe vtables and ordinary data.
+        // GLOB_DAT positions and code references must be examined first.
+        // The read-only ValidateSwitchGot script gathers that evidence.
 
         // Preserve legacy behavior for older Switch modules. A HashSet
         // avoids thousands of linear scans through large RELR tables.
