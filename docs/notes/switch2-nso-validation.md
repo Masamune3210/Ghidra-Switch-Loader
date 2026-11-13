@@ -2,7 +2,7 @@
 
 **Branch:** `note-working/switch2-nso-validation`  
 **Base:** `note-working/modern-kernel-loader` at `986b3b3791066d0eb216b9c5b7b34bf4f130c1f1` (do not rewrite the modern-kernel work).  
-**Status:** plain-JDK synthetic validation and two real-file boundary checks **passed on Windows** (Pokopia correctly rejected; Fire Emblem Fortune's Weave `main` correctly accepted); full Ghidra extension build/import **not yet verified**.
+**Status:** plain-JDK tests passed; real Pokopia boundary error correctly rejected; Fire Emblem Fortune's Weave `main` **successfully imported in Ghidra 12.1.3** with ZBIC sections and relocations. `.got` detection remains unresolved. Current extension version **1.6.3**, and the patch number must increase with every future buildable source change.
 
 ## Why this branch exists
 
@@ -41,10 +41,21 @@ The synthetic test should print `Synthetic NSO0 layout validation: PASS`. The Po
 
 **Further user verification (2026-11-13):** `java -cp build/nso-smoke adubbz.nx.loader.nso0.NSO0LayoutValidatorSmokeTest "G:\Users\Johnny\Downloads\yes\Fire Emblem Fortune's Weave\base\exefs\main"` produced `Synthetic NSO0 layout validation: PASS` and `Real NSO0 section bounds: PASS`. This proves that the **physical NSO section extent checks** accept the Fire Emblem loose `main`, in contrast with the Pokopia negative test. No compressed sections were decoded by this smoke test.
 
-**Not yet verified:** full Gradle/Ghidra extension build or actual Ghidra import/decompression of Fire Emblem; valid Switch 1 NSO regression compatibility.
+**Verified by user (Ghidra 12.1.3, 2026-11-13):** Fire Emblem's actual `main` successfully imported into Ghidra. The application log shows dynamic blocks `.dynstr`, `.init_array`, `.rela.dyn`, `.relr.dyn`, `.rela.plt`, `.gnu.hash`; it processed JMPREL, DT_RELR and DT_RELA relocations, mapped `.text`, `.rodata`, `.data` and created `.bss` (0x7102177000..0x7102273D08). Ghidra created `/Games/Switch 2/Fire Emblem/main`. This is stronger evidence than the previous physical-boundary test and confirms successful ZBIC decompression and executable mapping. **Remaining:** `NSO0Adapter` emitted `Failed to find .got section.` three times, so `.got` pointer markup may be incomplete; this is nonfatal but should not be silently dismissed. Ghidra auto-analysis quality and a Switch 1 regression import remain unverified.
 
 ## Next
 
 1. **Plain-JDK validator tests are complete.** Build the full extension (`.\gradlew.bat`) and import a known-valid Switch 1 NSO for regression coverage.
 2. Import the Fire Emblem Fortune's Weave loose `base/exefs/main` with the newly built Ghidra extension. The independent boundary test already **passed**; verify actual section decompression, MOD0/ELF analysis and mappings, and report the first error if import fails.
 3. Only then add targeted format/layout support. Keep all experimental changes on this branch until verified, and do not merge into `modern-kernel-loader` or the default branch without request.
+
+
+## 2026-11-13: Fire Emblem raw NSO and GOT analysis, extension version policy
+
+- Uploaded `main(5)` is **byte-identical** to previously supplied `main(4)` (SHA-256 `ee08f64d39f80c08c733e203be6f44c44265fdd69c7c824d562ab4f5d6d7d7d6`; file size `0xB7117A` = 11,997,562).
+- `NSO0`, version 0, flags `0xBF` (ZBIC bit 7 set). Module name `app`, Build ID `adfd9b7066f1071c68219b001a90cc9260d6cb47` padded with zeros. Text: file `0x104`, compressed `0x970E7F`, expanded `0x1A0CF70`. Ro: file `0x970F83`, compressed `0x1B74A6`, expanded `0x542008`. Data: file `0xB28429`, compressed `0x48D51`, expanded `0x2262D0`. All three are literal ZBIC frames; all extents fit within EOF `0xB7117A`.
+- User supplied Ghidra `application.log`: import was successful; sections, dynamic tables, relocations and BSS were created. The only reported loader error was **three instances** of `NSO0Adapter: Failed to find .got section.` These arise from `MOD0Adapter.findGot()`, whose heuristic only searches sequential relocation targets after the dynamic table or existing `.got.plt`. Do **not** invent a GOT interval; the log alone does not establish it.
+- Added read-only `ghidra_scripts/ProbeSwitchGot.java` to report Ghidra memory sections, dynamic tags (including `DT_PLTGOT` and `DT_INIT_ARRAY`), relocation type counts and contiguous offset clusters from `.rela.dyn`, `.rela.plt` and `.relr.dyn`. Run with Fire Emblem's imported `main` active in CodeBrowser. Compare real offsets to the original heuristic before implementing GOT reconstruction. **Not yet executed.**
+- **Version discipline requested by user:** Increment `gradle.properties` `version` patch number **every time buildable source/scripts are changed**, so both extension metadata and distribution ZIP name distinguish releases. Bumped `1.6.1 -> 1.6.2` to account for the existing NSO safety work, then `1.6.2 -> 1.6.3` for the GOT probe. Do not leave multiple source revisions using one numeric version. `build.gradle` already includes `project.version` and a Git hash in `archiveBaseName`.
+- **Next:** With imported Fire Emblem `main` selected, run `ProbeSwitchGot.java` from the Script Manager and inspect the output. Derive exact GOT boundaries from anchored tags/relocations, then implement/test a minimal `MOD0Adapter` improvement, **bumping to `1.6.4`** in that same source change. Confirm the full Gradle build and a known-good Switch 1 NSO regression before promoting this branch.
+
