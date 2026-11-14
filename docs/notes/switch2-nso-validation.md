@@ -1,6 +1,6 @@
 # Switch 2 NSO loader validation
 
-> **Integration note (2026-11-13):** The `modern-kernel-loader` history is fully included in this branch. This branch's work was incorporated into `master` together with Ghidra 12.2 compatibility as extension **1.6.7**, at the user's request. Earlier instructions below to avoid merging describe the prior experimental state. The 1.6.6 standalone tests passed, but the new automatic GOT detector has **not** yet been verified through a fresh Ghidra import. Check 12.2 CI and reimport before treating the GOT behavior as runtime-tested.
+> **Integration note (2026-11-13):** The `modern-kernel-loader` history is fully included in this branch. This branch's work was incorporated into `master` together with Ghidra 12.2 compatibility as extension **1.6.7**, at the user's request. Earlier instructions below to avoid merging describe the prior experimental state. The 1.6.6 standalone tests passed, but the new automatic GOT detector has **not** yet been verified through a fresh Ghidra import. The Ghidra 12.2 CI build and both standalone NSO/GOT tests passed: https://github.com/Masamune3210/Ghidra-Switch-Loader/actions/runs/43540969080. Reimport is still required before treating the GOT behavior as runtime-tested.
 
 **Branch:** `note-working/switch2-nso-validation`  
 **Base:** `note-working/modern-kernel-loader` at `986b3b3791066d0eb216b9c5b7b34bf4f130c1f1` (do not rewrite the modern-kernel work).  

@@ -13,4 +13,4 @@ Integrated into `master` with the modern-kernel and Switch 2 NSO validation work
 
 ## Verification
 
-The latest 1.6.6 GOT detector passed standalone tests under Java 21. The complete integrated 12.2 build and Ghidra runtime NSO/NRO import have not yet been verified; check the new master CI run before claiming build compatibility.
+**Ghidra 12.2 CI passed** on `master` at `24af52a`: https://github.com/Masamune3210/Ghidra-Switch-Loader/actions/runs/43540969080. Java 25, both standalone NSO/GOT regression checks, Gradle build, extension packaging, and artifact upload all succeeded. Artifact: `SwitchLoader-1.6.7-24af52a-Ghidra_12.2`. Actual NSO/NRO imports and the new automatic GOT-detection behavior in Ghidra 12.2 remain unverified.
