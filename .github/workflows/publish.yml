@@ -8,7 +8,10 @@ on:
         type: string
         required: true
   push:
+    branches: ["master", "compat/ghidra-12.2"]
+    tags: ["v*"]
   pull_request:
+    branches: ["master"]
 
 permissions:
   contents: write
@@ -18,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        ghidra: [ "12.1.2" ]
+        ghidra: [ "12.2" ]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -27,12 +30,22 @@ jobs:
         uses: actions/setup-java@v6
         with:
           distribution: "temurin"
-          java-version: "21"
+          java-version: "25"
 
       - name: Setup Ghidra ${{ matrix.ghidra }}
         uses: antoniovazquezblanco/setup-ghidra@v2.3.0
         with:
           version: ${{ matrix.ghidra }}
+
+      - name: Test NSO layout validation
+        run: |
+          javac -d build/nso-smoke src/main/java/adubbz/nx/loader/nso0/NSO0LayoutValidator.java tools/NSO0LayoutValidatorSmokeTest.java
+          java -cp build/nso-smoke adubbz.nx.loader.nso0.NSO0LayoutValidatorSmokeTest
+
+      - name: Test GOT relocation evidence
+        run: |
+          javac -d build/got-evidence src/main/java/adubbz/nx/loader/nxo/GotRelocationEvidence.java tools/GotRelocationEvidenceSmokeTest.java
+          java -cp build/got-evidence adubbz.nx.loader.nxo.GotRelocationEvidenceSmokeTest
 
       - name: Build extension
         run: ./gradlew
@@ -49,7 +62,6 @@ jobs:
           ZIP_FILE=$(basename "$ZIP_PATH")
           ARTIFACT_NAME="${ZIP_FILE%.zip}"
           EXTRACT_DIR="dist/${ARTIFACT_NAME}"
-          # SwitchLoader-1.6.1-2a1cb05-Ghidra_12.1.2 -> 1.6.1-2a1cb05-Ghidra_12.1.2
           RELEASE_TAG="${ARTIFACT_NAME#SwitchLoader-}"
 
           mkdir -p "$EXTRACT_DIR"
@@ -70,9 +82,8 @@ jobs:
       - name: Upload release
         uses: softprops/action-gh-release@v3
         if: |
-          github.event_name == 'push' || 
-          github.event_name == 'workflow_dispatch' || 
-          (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+          github.event_name == 'workflow_dispatch' ||
+          startsWith(github.ref, 'refs/tags/')
         with:
           tag_name: ${{ steps.artifact.outputs.release_tag }}
           name: ${{ steps.artifact.outputs.artifact_name }}

@@ -95,7 +95,7 @@ public class SwitchLoader extends BinaryLoader
         {
             this.binaryType = BinaryType.NSO0;
         }
-        else if (magic_0x0.equals("\u00DF\u004F\u0003\u00D5"))
+        else if (magic_0x0.equals("\u00DF\u004F\u0003\u00D5") || KNXAdapter.isKernel(provider))
         {
             this.binaryType = BinaryType.KERNEL_800;
         }
@@ -112,8 +112,19 @@ public class SwitchLoader extends BinaryLoader
         else
             return loadSpecs;
 
-        var adapter = this.binaryType.createAdapter(null, provider);
-        
+        NXOAdapter adapter;
+        try
+        {
+            adapter = this.binaryType.createAdapter(null, provider);
+        }
+        catch (IllegalArgumentException e)
+        {
+            // Malformed NSO0 sections (or an unsupported future encoding) must
+            // not crash the import-format probing UI.
+            Msg.error(this, "Cannot probe Nintendo Switch binary: " + e.getMessage(), e);
+            return loadSpecs;
+        }
+
         if (adapter.isAarch32())
         {
             loadSpecs.add(new LoadSpec(this, 0, new LanguageCompilerSpecPair(AARCH32_LANGUAGE_ID, new CompilerSpecID("default")), true));
@@ -137,7 +148,15 @@ public class SwitchLoader extends BinaryLoader
             provider = new ByteProviderWrapper(provider, 0x10, provider.length() - 0x10);
         }
 
-        var adapter = this.binaryType.createAdapter(program, provider);
+        NXOAdapter adapter;
+        try
+        {
+            adapter = this.binaryType.createAdapter(program, provider);
+        }
+        catch (IllegalArgumentException e)
+        {
+            throw new IOException("Cannot import Nintendo Switch binary: " + e.getMessage(), e);
+        }
         this.setDefaultAnalysisOptions(program);
         
         // Set the base address

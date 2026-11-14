@@ -35,16 +35,12 @@ else {
 //----------------------END "DO NOT MODIFY" SECTION-------------------------------
 
 def getGitHash = {
-    def stdout = new ByteArrayOutputStream()
-    exec {
-        if (System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows')) {
-            commandLine 'cmd', '/c', 'git', 'rev-parse', '--short', 'HEAD'
-        } else {
-            commandLine 'git', 'rev-parse', '--short', 'HEAD'
-        }
-        standardOutput = stdout
-    }
-    return stdout.toString().trim()
+    def gitCommand = System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows')
+        ? ['cmd', '/c', 'git', 'rev-parse', '--short', 'HEAD']
+        : ['git', 'rev-parse', '--short', 'HEAD']
+    return providers.exec { spec ->
+        spec.commandLine(gitCommand)
+    }.standardOutput.asText.get().trim()
 }
 
 repositories {

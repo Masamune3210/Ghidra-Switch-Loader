@@ -8,10 +8,8 @@ package adubbz.nx.loader.nso0;
 
 import java.io.IOException;
 
-import adubbz.nx.common.InvalidMagicException;
 import adubbz.nx.loader.nxo.NXOSectionType;
 import ghidra.app.util.bin.BinaryReader;
-import ghidra.util.Msg;
 
 public class NSO0Header 
 {
@@ -29,25 +27,26 @@ public class NSO0Header
     private long compressedRodataSize;
     private long compressedDataSize;
     
-    public NSO0Header(BinaryReader reader, int readerOffset)
+    public NSO0Header(BinaryReader reader, int readerOffset) throws IOException
     {
         long prevPointerIndex = reader.getPointerIndex();
-        
-        reader.setPointerIndex(readerOffset);
-        this.readHeader(reader);
-        
-        // Restore the previous pointer index
-        reader.setPointerIndex(prevPointerIndex);
-    }
-    
-    private void readHeader(BinaryReader reader)
-    {
-        try 
+
+        try
         {
-            this.magic = reader.readNextAsciiString(4);
-            
-            if (!this.magic.equals("NSO0"))
-                throw new InvalidMagicException("NSO0");
+            reader.setPointerIndex(readerOffset);
+            this.readHeader(reader);
+        }
+        finally
+        {
+            reader.setPointerIndex(prevPointerIndex);
+        }
+    }
+
+    private void readHeader(BinaryReader reader) throws IOException
+    {
+        this.magic = reader.readNextAsciiString(4);
+        if (!this.magic.equals("NSO0"))
+            throw new IOException("Invalid NSO0 magic");
             
             this.version = reader.readNextUnsignedInt();
             reader.readNextUnsignedInt(); // Reserved
@@ -62,11 +61,6 @@ public class NSO0Header
             this.compressedTextSize = reader.readNextUnsignedInt();
             this.compressedRodataSize = reader.readNextUnsignedInt();
             this.compressedDataSize = reader.readNextUnsignedInt();
-        } 
-        catch (IOException e) 
-        {
-            Msg.error(this, "Failed to read NSO0 header");
-        }
     }
     
     public NSO0SectionHeader getSectionHeader(NXOSectionType type)
