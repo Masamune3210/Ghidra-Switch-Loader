@@ -8,7 +8,10 @@ on:
         type: string
         required: true
   push:
+    branches: ["master", "compat/ghidra-12.2"]
+    tags: ["v*"]
   pull_request:
+    branches: ["master"]
 
 permissions:
   contents: write
@@ -18,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        ghidra: [ "12.1.2" ]
+        ghidra: [ "12.2" ]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -27,7 +30,7 @@ jobs:
         uses: actions/setup-java@v6
         with:
           distribution: "temurin"
-          java-version: "21"
+          java-version: "25"
 
       - name: Setup Ghidra ${{ matrix.ghidra }}
         uses: antoniovazquezblanco/setup-ghidra@v2.1.6
@@ -70,9 +73,8 @@ jobs:
       - name: Upload release
         uses: softprops/action-gh-release@v3
         if: |
-          github.event_name == 'push' || 
-          github.event_name == 'workflow_dispatch' || 
-          (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+          github.event_name == 'workflow_dispatch' ||
+          startsWith(github.ref, 'refs/tags/')
         with:
           tag_name: ${{ steps.artifact.outputs.release_tag }}
           name: ${{ steps.artifact.outputs.artifact_name }}
