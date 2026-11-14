@@ -4,13 +4,13 @@ A loader for Ghidra supporting a variety of Nintendo Switch file formats.
 
 ## Building
 
-- Ensure you have ``JAVA_HOME`` set to the path of your JDK 21 installation.
+- Ensure you have ``JAVA_HOME`` set to the path of your JDK 25 (or newer) installation.
 - Set ``GHIDRA_INSTALL_DIR`` to your Ghidra install directory. This can be done in one of the following ways:
   - **Windows**: Running ``set GHIDRA_INSTALL_DIR=<Absolute path to Ghidra without quotations>``
   - **macos/Linux**: Running ``export GHIDRA_INSTALL_DIR=<Absolute path to Ghidra>``
   - Using ``-PGHIDRA_INSTALL_DIR=<Absolute path to Ghidra>`` when running ``./gradlew``
   - Adding ``GHIDRA_INSTALL_DIR`` to your Windows environment variables.
-- Run ``./gradlew``
+- Run ``./gradlew`` (the included wrapper uses Gradle 9.1 for Ghidra 12.2)
 - You'll find the output zip file inside `/dist`
 
 ## Installation
